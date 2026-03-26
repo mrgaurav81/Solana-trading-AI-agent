@@ -56,14 +56,12 @@ def check_stop_loss_take_profit(portfolio, current_prices):
     (1.0 = full sell, 0.5 = partial sell of half the position).
     """
     STOP_LOSS_PCT, TAKE_PROFIT_PCT = _load_sl_tp_settings()
-    TP2_PCT = TAKE_PROFIT_PCT * 2   # second tier
 
     tokens_to_sell = []
 
     for symbol, holding in portfolio["holdings"].items():
         buy_price     = holding.get("buy_price", 0)
         current_price = current_prices.get(symbol, 0)
-        half_sold     = holding.get("half_sold", False)  # track partial exits
 
         if buy_price == 0 or current_price == 0:
             continue
@@ -82,31 +80,18 @@ def check_stop_loss_take_profit(portfolio, current_prices):
             print(f"   STOP LOSS triggered for {symbol}! "
                   f"Down {abs(pct_change):.2f}%")
 
-        elif pct_change >= TP2_PCT:
-            # Second tier — sell whatever is left
+        elif pct_change >= TAKE_PROFIT_PCT:
+            # Sell 100% of position when take-profit target is hit
             tokens_to_sell.append({
                 "symbol"       : symbol,
-                "reason"       : "TAKE_PROFIT_T2",
+                "reason"       : "TAKE_PROFIT",
                 "pct_change"   : round(pct_change, 2),
                 "buy_price"    : buy_price,
                 "current_price": current_price,
                 "fraction"     : 1.0
             })
-            print(f"   TAKE PROFIT T2 (+{TP2_PCT:.0f}%) for {symbol}! "
-                  f"Up {pct_change:.2f}%")
-
-        elif pct_change >= TAKE_PROFIT_PCT and not half_sold:
-            # First tier — partial sell (50%)
-            tokens_to_sell.append({
-                "symbol"       : symbol,
-                "reason"       : "TAKE_PROFIT_T1",
-                "pct_change"   : round(pct_change, 2),
-                "buy_price"    : buy_price,
-                "current_price": current_price,
-                "fraction"     : 0.5
-            })
-            print(f"   TAKE PROFIT T1 (+{TAKE_PROFIT_PCT:.0f}%) for {symbol}! "
-                  f"Selling 50% — Up {pct_change:.2f}%")
+            print(f"   TAKE PROFIT (+{TAKE_PROFIT_PCT:.0f}%) for {symbol}! "
+                  f"Selling 100% — Up {pct_change:.2f}%")
 
     return tokens_to_sell
 
@@ -306,6 +291,8 @@ def execute_partial_sell(portfolio, symbol, fraction, current_price):
     if profit_loss > 0:
         portfolio["winning_trades"] = portfolio.get("winning_trades", 0) + 1
 
+    pct_change = ((current_price - buy_price) / buy_price) * 100
+
     trade = {
         "type"       : "SELL_PARTIAL",
         "symbol"     : symbol,
@@ -315,6 +302,7 @@ def execute_partial_sell(portfolio, symbol, fraction, current_price):
         "sell_price" : current_price,
         "sell_value" : sell_value,
         "profit_loss": profit_loss,
+        "pct_change" : round(pct_change, 2),
         "time"       : datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     }
     portfolio["trade_history"].append(trade)
