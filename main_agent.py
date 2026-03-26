@@ -149,28 +149,39 @@ def check_portfolio_recovery(portfolio, current_prices):
 def run_smarter_sell_check(portfolio, current_prices, bullish_tokens):
     """
     Additional sell signals beyond basic stop-loss / take-profit:
-    1. Down >5% from buy price  (covered by run_stop_loss_check)
+    1. Take-profit hit       → sell 100% immediately (reads from agent_settings.json)
     2. Held >24h with no profit  → sell
     3. Momentum reversal        → sell if token NOT in this cycle's bullish list
-    4. Volume drop check is handled inside ai_brain via AI SELL decision
     """
     settings        = load_settings()
-    sl_pct          = settings.get("stop_loss_pct", 5.0)
-    tp1_pct         = settings.get("take_profit_pct", 15.0)   # 50% partial sell
-    tp2_pct         = tp1_pct * 2                               # full exit
+    tp_pct          = settings.get("take_profit_pct", 15.0)
     bullish_symbols = {t.get("symbol", "") for t in bullish_tokens}
     sold_tokens     = []
 
     for symbol, h in list(portfolio["holdings"].items()):
-        buy_price    = h.get("buy_price", 0)
+        buy_price     = h.get("buy_price", 0)
         current_price = current_prices.get(symbol, 0)
-        bought_at    = h.get("bought_at", "")
+        bought_at     = h.get("bought_at", "")
         if not buy_price or not current_price:
             continue
 
-        pct_change   = ((current_price - buy_price) / buy_price) * 100
+        pct_change = ((current_price - buy_price) / buy_price) * 100
 
-        # Signal: held > 24 hours with zero or negative profit
+        # Signal 1: Take-profit hit — sell 100%
+        if pct_change >= tp_pct:
+            log(f"   TAKE PROFIT hit for {symbol} (+{pct_change:.2f}% >= +{tp_pct:.0f}%) — selling 100%")
+            portfolio, success = execute_paper_sell(portfolio, symbol, current_price)
+            if success:
+                sold_tokens.append({
+                    "symbol"       : symbol,
+                    "reason"       : "TAKE_PROFIT",
+                    "pct_change"   : round(pct_change, 2),
+                    "buy_price"    : buy_price,
+                    "current_price": current_price
+                })
+            continue
+
+        # Signal 2: held > 24 hours with zero or negative profit
         if bought_at:
             try:
                 held_since = datetime.strptime(bought_at, "%Y-%m-%d %H:%M:%S")
@@ -190,7 +201,7 @@ def run_smarter_sell_check(portfolio, current_prices, bullish_tokens):
             except:
                 pass
 
-        # Signal: momentum reversal — token not bullish this cycle
+        # Signal 3: momentum reversal — token not bullish this cycle AND in loss
         if symbol not in bullish_symbols and pct_change < 0:
             log(f"   Selling {symbol} — momentum reversed, not in bullish list")
             portfolio, success = execute_paper_sell(portfolio, symbol, current_price)
