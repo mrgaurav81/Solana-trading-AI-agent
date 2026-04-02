@@ -149,11 +149,13 @@ def load_portfolio():
         with open("portfolio.json", "r") as f:
             return json.load(f)
     return {
-        "usdt_balance"  : 100.0,
+        "usdt_balance"  : 8.70,
+        "start_balance" : 8.70,
         "holdings"      : {},
         "trade_history" : [],
         "total_trades"  : 0,
-        "winning_trades": 0
+        "winning_trades": 0,
+        "mode"          : "REAL"
     }
 
 
@@ -231,9 +233,10 @@ def get_dashboard_data():
             "take_profit"  : round(take_profit, 8)
         })
 
+    start_balance = portfolio.get("start_balance", 8.70)
     total_value = usdt_balance + total_holdings
-    profit_loss = total_value - 100.0
-    pnl_pct     = (profit_loss / 100) * 100
+    profit_loss = total_value - start_balance
+    pnl_pct     = (profit_loss / start_balance) * 100 if start_balance > 0 else 0
 
     win_rate = 0
     if total_trades > 0:
