@@ -220,8 +220,9 @@ def run_smarter_sell_check(portfolio, current_prices, bullish_tokens):
             except:
                 pass
 
-        # Signal 3: momentum reversal — token not bullish this cycle AND in loss
-        if symbol not in bullish_symbols and pct_change < 0:
+        # Signal 3: momentum reversal — token not bullish this cycle AND in real loss (>3%)
+        # Note: require >3% loss threshold on real money to avoid selling on minor dips
+        if symbol not in bullish_symbols and pct_change < -3.0:
             log(f"   Selling {symbol} — momentum reversed, not in bullish list")
             portfolio, success = execute_paper_sell(portfolio, symbol, current_price)
             if success:

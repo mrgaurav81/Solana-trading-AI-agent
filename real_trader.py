@@ -96,13 +96,33 @@ def _load_settings() -> dict:
 # ═══════════════════════════════════════════════════════════════════
 
 def load_portfolio() -> dict:
-    """Load or create portfolio. Starting balance = real USDT balance."""
+    """Load or create real portfolio from on-chain balance."""
     if os.path.exists(PORTFOLIO_FILE):
-        with open(PORTFOLIO_FILE) as f:
-            return json.load(f)
-    real_bal = get_real_usdt_balance()
+        data = json.load(open(PORTFOLIO_FILE))
+        # Migrate old paper-trading portfolios: reset if mode != REAL
+        if data.get("mode") != "REAL":
+            print("   [real_trader] Old paper portfolio detected — resetting to REAL mode")
+            real_bal = get_real_usdt_balance() or 8.70
+            data = {
+                "usdt_balance"  : real_bal,
+                "start_balance" : real_bal,
+                "holdings"      : {},
+                "trade_history" : [],
+                "total_trades"  : 0,
+                "winning_trades": 0,
+                "created_at"    : datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "mode"          : "REAL",
+            }
+            save_portfolio(data)
+        # Ensure start_balance is always set
+        if "start_balance" not in data:
+            data["start_balance"] = data["usdt_balance"]
+            save_portfolio(data)
+        return data
+    real_bal = get_real_usdt_balance() or 8.70
     portfolio = {
         "usdt_balance"  : real_bal,
+        "start_balance" : real_bal,
         "holdings"      : {},
         "trade_history" : [],
         "total_trades"  : 0,
@@ -545,6 +565,9 @@ def execute_real_buy(portfolio: dict, token: dict, amount_usdt,
     portfolio["total_trades"] = portfolio.get("total_trades", 0) + 1
     save_portfolio(portfolio)
 
+    # Sync real on-chain balance after trade (accounts for gas taken from USDT)
+    portfolio = sync_balance_from_chain(portfolio)
+
     print(f"\n   ✅ REAL BUY EXECUTED!")
     print(f"   Bought  : {tokens_bought:.6f} {symbol}")
     print(f"   Price   : ${price}")
@@ -573,6 +596,12 @@ def execute_real_sell(portfolio: dict, symbol: str,
 
     if not contract:
         print(f"   [real_trader] No contract for {symbol} — cannot sell on-chain")
+        return portfolio, False
+
+    # Round tokens to 6 decimal places to avoid API rejection on tiny amounts
+    tokens = round(tokens, 6)
+    if tokens <= 0:
+        print(f"   [real_trader] Token amount too small to sell — skipping")
         return portfolio, False
 
     print(f"\n   [real_trader] REAL SELL: {tokens:.6f} {symbol}")
@@ -639,6 +668,9 @@ def execute_real_sell(portfolio: dict, symbol: str,
     portfolio["trade_history"].append(trade)
     portfolio["total_trades"] = portfolio.get("total_trades", 0) + 1
     save_portfolio(portfolio)
+
+    # Sync real on-chain balance after sell (gets actual USDT received)
+    portfolio = sync_balance_from_chain(portfolio)
 
     result_label = "PROFIT" if profit_loss >= 0 else "LOSS"
     print(f"\n   ✅ REAL SELL EXECUTED!")
