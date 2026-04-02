@@ -92,6 +92,13 @@ def stop_agent():
     with agent_lock:
         ctrl_stop()
 
+        try:
+            from main_agent import liquidate_all_holdings
+            print("Liquidating holdings before stopping...")
+            liquidate_all_holdings()
+        except Exception as e:
+            print(f"Error during liquidation: {e}")
+
         # Kill by PID file first (survives dashboard restarts)
         old_pid = _read_pid()
         if old_pid:
@@ -187,6 +194,19 @@ def get_dashboard_data():
         current_price, is_live = get_current_price_with_fallback(
             symbol, buy_price, contract
         )
+
+        # ── Price sanity guard ────────────────────────────────────────────────
+        # If the fetched price is >10x or <10x different from buy_price, it
+        # almost certainly comes from a different token with the same symbol
+        # (e.g. Bitget-listed PIXEL ≠ Solana meme PIXEL).
+        # Fall back to buy_price so the dashboard never shows fake +4000% P&L.
+        if is_live and buy_price > 0:
+            ratio = current_price / buy_price
+            if ratio > 10 or ratio < 0.1:
+                current_price = buy_price   # show neutral, not fake profit
+                is_live       = False       # mark as stale so P&L shows '--'
+        # ─────────────────────────────────────────────────────────────────────
+
         value       = amount * current_price
         cost        = amount * buy_price
         pnl         = value - cost

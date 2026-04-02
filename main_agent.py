@@ -76,12 +76,28 @@ def get_current_prices(holdings):
     """
     Fetches live prices for all holdings using the unified price_fetcher.
     Passes contract address for meme coins that aren't on Bitget spot.
+
+    SAFETY GUARD: if the resolved price is more than 10x away from the
+    buy price, it almost certainly comes from a different token that shares
+    the same ticker symbol (e.g. Solana meme PIXEL vs listed PIXEL on
+    Bitget spot). We discard that price and skip the holding so the agent
+    never triggers a fake 3000% take-profit.
     """
     prices = {}
     for symbol, h in holdings.items():
-        contract = h.get("contract", "")
+        contract  = h.get("contract", "")
+        buy_price = h.get("buy_price", 0)
         price, source = get_token_price(symbol, contract)
         if price and price > 0:
+            # Sanity check: reject prices that are >10x above or <10x below buy price
+            if buy_price > 0:
+                ratio = price / buy_price
+                if ratio > 10 or ratio < 0.1:
+                    log(f"   ⚠️  PRICE SANITY FAIL for {symbol}: "
+                        f"buy=${buy_price:.8f}, fetched=${price:.8f} "
+                        f"(ratio={ratio:.1f}x via {source}) — "
+                        f"likely wrong-token collision, skipping")
+                    continue   # do NOT use this price
             prices[symbol] = price
             log(f"   {symbol} price: ${price} (via {source})")
         else:
@@ -377,6 +393,12 @@ def run_trading_cycle():
                     log(f"No data for {symbol} — skipping")
                     continue
 
+                # Blacklist check — skip tokens blocked in agent_settings.json
+                blacklist = [s.upper() for s in settings.get("blacklisted_tokens", [])]
+                if symbol.upper().replace("USDT", "") in blacklist:
+                    log(f"   {symbol} is blacklisted — skipping BUY")
+                    continue
+
                 # Get swap quote
                 quote    = None
                 contract = token_data.get("contract", "")
@@ -562,6 +584,49 @@ def run_stop_loss_monitor():
 
 
 
+def liquidate_all_holdings():
+    """
+    Sells all active holdings at current market price.
+    Usually triggered when the agent is stopped or paused.
+    """
+    log("LIQUIDATION TRIGGERED: Agent stopped. Selling all holdings.")
+    portfolio = load_portfolio()
+    
+    if not portfolio["holdings"]:
+        log("Portfolio is already empty.")
+        return
+
+    prices = get_current_prices(portfolio["holdings"])
+    
+    for symbol, h in list(portfolio["holdings"].items()):
+        price = prices.get(symbol, 0)
+        tokens = h.get("amount", 0)
+        
+        # Fallback if price wasn't fetched in batch
+        if price == 0:
+            contract = h.get("contract", "")
+            fetched_price, _ = get_token_price(symbol, contract)
+            price = fetched_price or 0
+
+        if price > 0:
+            log(f"   Liquidating {symbol}: {tokens} tokens at ${price}")
+            portfolio, success = execute_paper_sell(portfolio, symbol, price)
+            if success:
+                try:
+                    notify_trade_executed(
+                        trade_type ="SELL (LIQUIDATION)",
+                        symbol     =symbol,
+                        amount_usdt=round(tokens * price, 2),
+                        price      =price,
+                        tokens     =tokens,
+                        balance    =portfolio["usdt_balance"]
+                    )
+                except:
+                    pass
+        else:
+            log(f"   ERROR: Could not get price to liquidate {symbol}")
+
+
 def start_agent():
     """
     Main agent loop with auto-reconnect and control system.
@@ -605,6 +670,7 @@ def start_agent():
             while True:
                 if not is_running():
                     log("Agent stopped externally. Waiting...")
+                    liquidate_all_holdings()
                     schedule.clear()
                     while not is_running():
                         time.sleep(5)

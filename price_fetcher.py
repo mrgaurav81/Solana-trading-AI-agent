@@ -105,31 +105,38 @@ def _bitget_skill_search(symbol: str):
 
 def get_token_price(symbol: str, contract: str = "") -> tuple:
     """
-    Resolve the current price for a token using a 3-source fallback.
+    Resolve the current price for a token using the correct source.
 
-    Args:
-        symbol:   Token ticker, e.g. "WIF", "BONK", "CHIBI"
-        contract: Solana contract address (optional but strongly recommended
-                  for meme coins not listed on Bitget spot)
+    Rules:
+    • Contract known (Solana meme coin):
+        → ONLY use _bitget_skill_contract(contract).
+        → If that fails, return (None, "unavailable").
+        → We deliberately do NOT fall back to Bitget spot or keyword search
+          because both can return a DIFFERENT token that happens to share
+          the same symbol name (e.g. listed PIXEL ≠ Solana meme PIXEL).
 
-    Returns:
-        (price, source)  where price is float or None, source is a string
-        describing which API provided the price.
+    • No contract (major listed coin like SOL, WIF, BONK):
+        → Try Bitget spot first (fast, accurate for listed coins).
+        → Fall back to keyword search as a last resort.
     """
-    # Source 1 — Bitget spot (fast, works for listed tokens)
-    price, source = _bitget_spot(symbol)
-    if price:
-        return price, source
+    if contract:
+        # Meme coin — contract is the only reliable identifier.
+        # Never use symbol-based lookups; they can return the wrong token.
+        price, source = _bitget_skill_contract(contract)
+        if price and price > 0:
+            return price, source
+        # Contract lookup failed — return nothing rather than guess.
+        return None, "unavailable"
 
-    # Source 2 — Bitget Wallet Skill contract price (meme coins)
-    price, source = _bitget_skill_contract(contract)
-    if price:
-        return price, source
+    else:
+        # Listed token — no contract, so symbol-based lookups are safe.
+        price, source = _bitget_spot(symbol)
+        if price:
+            return price, source
 
-    # Source 3 — Bitget Wallet Skill keyword search (last resort)
-    price, source = _bitget_skill_search(symbol)
-    if price:
-        return price, source
+        price, source = _bitget_skill_search(symbol)
+        if price:
+            return price, source
 
     return None, "unavailable"
 
