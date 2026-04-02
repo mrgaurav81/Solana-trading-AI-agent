@@ -8,14 +8,15 @@ import threading
 from datetime import datetime, timedelta
 from market_scanner import run_scanner
 from ai_brain import run_ai_brain
-from paper_trader import (
+from real_trader import (
     load_portfolio, save_portfolio,
-    execute_paper_buy, execute_paper_sell,
+    execute_real_buy  as execute_paper_buy,
+    execute_real_sell as execute_paper_sell,
     execute_partial_sell,
     print_portfolio_status, calculate_portfolio_value,
-    run_stop_loss_check
+    run_stop_loss_check,
+    sync_balance_from_chain
 )
-from bitget_skill import get_swap_quote
 from price_fetcher import get_token_price
 from agent_control import (
     get_control, is_running, get_mode,
@@ -33,7 +34,7 @@ from telegram_bot import (
 )
 
 SCAN_INTERVAL_MINUTES = 15
-STARTING_BALANCE      = 100.0
+STARTING_BALANCE      = 8.70   # real USDT on Solana wallet
 LOG_FILE              = "agent_log.txt"
 SETTINGS_FILE         = "agent_settings.json"
 
@@ -135,10 +136,12 @@ def check_portfolio_recovery(portfolio, current_prices):
 
     total_value = calculate_portfolio_value(portfolio, current_prices)
 
-    if total_value < 70.0:
+    # Recovery thresholds scaled for real $8.70 balance:
+    # Enter recovery below $4.00, exit above $5.00
+    if total_value < 4.00:
         if not _recovery_active:
             _recovery_active = True
-            log("⚠️  RECOVERY MODE ACTIVATED — portfolio below $70")
+            log("⚠️  RECOVERY MODE ACTIVATED — portfolio below $4.00")
             try:
                 notify_recovery_mode(
                     active=True,
@@ -148,9 +151,9 @@ def check_portfolio_recovery(portfolio, current_prices):
                 pass
         return True  # In recovery, block buys
 
-    if _recovery_active and total_value >= 80.0:
+    if _recovery_active and total_value >= 5.00:
         _recovery_active = False
-        log("✅  Recovery mode deactivated — portfolio back above $80")
+        log("✅  Recovery mode deactivated — portfolio back above $5.00")
         try:
             notify_recovery_mode(
                 active=False,
@@ -253,9 +256,10 @@ def run_trading_cycle():
     settings = load_settings()
 
     try:
-        # Step 1 — load portfolio
+        # Step 1 — load portfolio and sync real on-chain balance
         portfolio = load_portfolio()
-        log(f"Portfolio loaded. Balance: ${portfolio['usdt_balance']:.2f}")
+        portfolio = sync_balance_from_chain(portfolio)
+        log(f"Portfolio loaded. Real USDT Balance: ${portfolio['usdt_balance']:.4f}")
 
         # Step 2 — stop-loss / take-profit check (uses price_fetcher via paper_trader)
         if portfolio["holdings"]:
@@ -384,8 +388,8 @@ def run_trading_cycle():
                     log(f"Already holding {symbol} — skipping")
                     continue
 
-                if portfolio["usdt_balance"] < 30:
-                    log("Balance too low — protecting reserve")
+                if portfolio["usdt_balance"] < 3.00:
+                    log("Balance too low — protecting $3 reserve")
                     continue
 
                 token_data = token_lookup.get(symbol)
@@ -399,20 +403,9 @@ def run_trading_cycle():
                     log(f"   {symbol} is blacklisted — skipping BUY")
                     continue
 
-                # Get swap quote
+                # Quote handled internally by real_trader execute_real_buy
                 quote    = None
                 contract = token_data.get("contract", "")
-                if contract:
-                    try:
-                        quote = get_swap_quote(
-                            from_contract="EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
-                            from_symbol  ="USDC",
-                            from_amount  =str(amount),
-                            to_contract  =contract,
-                            to_symbol    =symbol
-                        )
-                    except:
-                        pass
 
                 # Confirm trade
                 if mode == "auto":
@@ -632,7 +625,9 @@ def start_agent():
     Main agent loop with auto-reconnect and control system.
     """
     print("=" * 60)
-    print("  Solana AI Trading Agent - LIVE")
+    print("  Solana AI Trading Agent - REAL TRADING MODE 🔥")
+    print("  Wallet: Gwj7WyRfoNP1a5ZcUhEDfNKmtRxGYPffKCz97TpRapmT")
+    print("  Chain : Solana | Gas: no_gas mode (deducted from USDT)")
     print("=" * 60)
     print(f"\nStarting: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"Interval: {SCAN_INTERVAL_MINUTES} minutes")
