@@ -25,6 +25,19 @@ from datetime import datetime
 from pathlib import Path
 from dotenv import load_dotenv
 
+_LOG_FILE = "agent_log.txt"
+
+def _log(message: str):
+    """Write to both stdout and the shared agent log file."""
+    ts  = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    msg = f"[{ts}] {message}"
+    print(msg)
+    try:
+        with open(_LOG_FILE, "a", encoding="utf-8") as f:
+            f.write(msg + "\n")
+    except Exception:
+        pass
+
 load_dotenv()
 
 # ── wallet config ──────────────────────────────────────────────────
@@ -467,31 +480,32 @@ def execute_real_buy(portfolio: dict, token: dict, amount_usdt,
 
     # ── safety checks ────────────────────────────────────────────
     if not SOL_WALLET or not SOL_PRIV_KEY:
-        print("   [real_trader] Wallet not configured — aborting buy")
+        _log(f"   [real_trader] ❌ Wallet not configured — aborting BUY of {symbol}")
         return portfolio, False
 
     if not contract:
-        print(f"   [real_trader] No contract for {symbol} — skipping")
+        _log(f"   [real_trader] ❌ No contract address for {symbol} — skipping BUY")
         return portfolio, False
 
     if amount_u > MAX_TRADE_USDT:
         amount_u = MAX_TRADE_USDT
-        print(f"   [real_trader] Capped trade to ${MAX_TRADE_USDT}")
+        _log(f"   [real_trader] Capped trade to ${MAX_TRADE_USDT}")
 
     if portfolio["usdt_balance"] - amount_u < MIN_USDT_RESERVE:
-        print(f"   [real_trader] Would breach ${MIN_USDT_RESERVE} reserve — skipping")
+        _log(f"   [real_trader] ❌ Would breach ${MIN_USDT_RESERVE} reserve "
+             f"(balance=${portfolio['usdt_balance']:.2f}, amount=${amount_u:.2f}) — skipping BUY of {symbol}")
         return portfolio, False
 
     if len(portfolio["holdings"]) >= MAX_OPEN_POSITIONS:
-        print(f"   [real_trader] Max {MAX_OPEN_POSITIONS} positions open — skipping")
+        _log(f"   [real_trader] ❌ Max {MAX_OPEN_POSITIONS} positions already open — skipping BUY of {symbol}")
         return portfolio, False
 
-    print(f"\n   [real_trader] REAL BUY: {symbol} for ${amount_u:.2f} USDT")
+    _log(f"   [real_trader] 🚀 REAL BUY: {symbol} for ${amount_u:.2f} USDT (contract: {contract[:8]}...)")
 
     # ── Step 1: get quote ────────────────────────────────────────
     best = _get_best_quote(str(amount_u), contract, symbol)
     if not best:
-        print("   [real_trader] Could not get quote — aborting")
+        _log(f"   [real_trader] ❌ Could not get swap quote for {symbol} — aborting BUY")
         return portfolio, False
 
     market     = (best.get("market") or {}).get("id", "")
@@ -521,7 +535,7 @@ def execute_real_buy(portfolio: dict, token: dict, amount_usdt,
             pass
 
     if not success:
-        print(f"   [real_trader] BUY FAILED for {symbol}")
+        _log(f"   [real_trader] ❌ BUY FAILED for {symbol} — on-chain transaction rejected")
         return portfolio, False
 
     # ── Update portfolio ─────────────────────────────────────────

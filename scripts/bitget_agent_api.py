@@ -18,6 +18,13 @@ from typing import List, Optional
 
 import requests
 
+# ── Force UTF-8 stdout/stderr on Windows to avoid UnicodeEncodeError
+# when printing token names that contain emojis or special characters.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 BASE_URL = "https://copenapi.bgwapi.io"
 
 
